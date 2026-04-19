@@ -1,0 +1,7 @@
+{
+  "name": "@lunchbox/trpc-client",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "libs/trpc-client/src",
+  "projectType": "library",
+  "tags": ["scope:shared", "type:api-client"]
+}

@@ -1,0 +1,11 @@
+{
+  "name": "@lunchbox/i18n",
+  "version": "0.0.1",
+  "private": true,
+  "main": "./src/index.tsx",
+  "types": "./src/index.tsx",
+  "peerDependencies": {
+    "react": "^19.0.0"
+  },
+  "type": "module"
+}

@@ -1,0 +1,21 @@
+{
+  "name": "@lunchbox/trpc-client",
+  "version": "0.0.1",
+  "private": true,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "peerDependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "dependencies": {
+    "@trpc/client": "^11.0.0",
+    "@trpc/tanstack-react-query": "^11.0.0",
+    "@tanstack/react-query": "^5.62.0",
+    "superjson": "^2.2.1",
+    "better-auth": "^1.2.7",
+    "@lunchbox/trpc-server": "*",
+    "@lunchbox/auth": "*"
+  },
+  "type": "module"
+}

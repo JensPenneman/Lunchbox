@@ -1,0 +1,747 @@
+// ============================================================
+// Lunchbox — data model (brainstorm draft)
+// ============================================================
+// Paste this into https://dbdiagram.io/d to get a live visual
+// editor. Changes in either view stay in sync.
+//
+// See data-model.md for narrative, rationale, and open questions.
+// OPEN / TODO / NOTE markers are kept inline as comments.
+// ============================================================
+
+Project lunchbox {
+  database_type: 'PostgreSQL'
+  Note: '''
+    Belgian multi-frontend lunch ordering platform.
+    Solo dev, greenfield. Nothing here is final.
+  '''
+}
+
+// ============================================================
+// Enums
+// ============================================================
+
+Enum tenant_status {
+  onboarding
+  active
+  suspended
+  closed
+}
+
+Enum favv_permit_type {
+  registration
+  authorization
+  approval
+}
+
+Enum locale {
+  nl
+  fr
+  en
+}
+
+Enum merchant_role {
+  owner
+  manager
+  staff
+  accountant
+}
+
+Enum company_type {
+  business
+  school
+  other
+}
+
+Enum invoicing_method {
+  peppol
+  email_pdf_legacy
+}
+
+Enum company_member_role {
+  member
+  admin
+  billing_contact
+}
+
+Enum employer_contribution_type {
+  flat_per_order
+  percent
+  capped_flat
+}
+
+Enum employer_contribution_scope {
+  all_orders
+  group_orders_only
+  specific_tenants
+}
+
+Enum product_availability {
+  always
+  scheduled
+  sold_out
+}
+
+Enum order_status {
+  draft
+  pending_payment
+  paid
+  accepted
+  preparing
+  ready
+  out_for_delivery
+  fulfilled
+  cancelled
+  refunded
+}
+
+Enum fulfillment_type {
+  pickup
+  delivery
+}
+
+Enum group_order_status {
+  collecting
+  closed
+  sent_to_shop
+  fulfilled
+  cancelled
+}
+
+Enum slot_type {
+  pickup
+  delivery
+  both
+}
+
+Enum payment_method {
+  bancontact
+  bancontact_pay
+  wero
+  card
+  sepa_direct_debit
+  ideal
+  cartes_bancaires
+  meal_voucher
+  wallet
+  invoice
+  paypal
+  cash
+}
+
+Enum payment_status {
+  pending
+  authorized
+  captured
+  failed
+  refunded
+  partially_refunded
+}
+
+Enum payment_provider {
+  mollie
+  adyen
+  stripe
+}
+
+Enum meal_voucher_provider {
+  edenred
+  monizze
+  pluxee
+}
+
+Enum invoice_type {
+  b2b
+  b2c
+  merchant_payout
+}
+
+Enum peppol_status {
+  not_sent
+  sent
+  delivered
+  failed
+  na
+}
+
+Enum payout_status {
+  scheduled
+  sent
+  failed
+}
+
+Enum allergen_code {
+  gluten
+  crustaceans
+  eggs
+  fish
+  peanuts
+  soybeans
+  milk
+  nuts
+  celery
+  mustard
+  sesame
+  sulphites
+  lupin
+  molluscs
+}
+
+// ============================================================
+// 1. Tenancy & Identity
+// ============================================================
+
+Table tenants {
+  id uuid [pk]
+  name varchar
+  legal_name varchar
+  vat_number varchar [note: 'BE0XXXXXXXXX']
+  kbo_number varchar [note: '10-digit enterprise number']
+  favv_permit_type favv_permit_type
+  default_locale locale
+  supported_locales json [note: 'array of locale codes']
+  status tenant_status
+  created_at timestamp
+  updated_at timestamp
+  Note: 'OPEN: is Tenant the billing entity, or do we need an Organization above it?'
+}
+
+Table locations {
+  id uuid [pk]
+  tenant_id uuid [ref: > tenants.id]
+  name varchar
+  street varchar
+  street_number varchar
+  postal_code varchar
+  city varchar
+  country varchar [default: 'BE']
+  lat decimal
+  lng decimal
+  phone varchar
+  timezone varchar [default: 'Europe/Brussels']
+  Note: 'OPEN: model kitchen throughput (orders per slot)?'
+}
+
+Table storefronts {
+  id uuid [pk]
+  tenant_id uuid [ref: > tenants.id]
+  slug varchar [unique]
+  custom_domain varchar [unique, note: 'nullable']
+  theme json
+  default_locale locale
+  published boolean
+  Note: 'OPEN: 1:1 with Tenant or 1:N per brand/location?'
+}
+
+Table users {
+  id uuid [pk]
+  email varchar [unique]
+  phone varchar
+  auth_method varchar [note: 'OPEN: password | passkey | oauth?']
+  preferred_locale locale
+  created_at timestamp
+  Note: 'TODO: GDPR soft-delete vs hard-delete, data export.'
+}
+
+Table merchant_users {
+  user_id uuid [ref: > users.id]
+  tenant_id uuid [ref: > tenants.id]
+  role merchant_role
+  invited_at timestamp
+  accepted_at timestamp
+
+  indexes {
+    (user_id, tenant_id) [pk]
+  }
+}
+
+Table customers {
+  id uuid [pk]
+  user_id uuid [ref: > users.id, note: 'nullable = guest']
+  display_name varchar
+  default_delivery_location_id uuid
+  allergen_flags json [note: 'array of allergen_code']
+  Note: 'OPEN: merge with User? Per-tenant or global profile?'
+}
+
+// ============================================================
+// 2. Company / B2B buyer side
+// ============================================================
+
+Table companies {
+  id uuid [pk]
+  name varchar
+  vat_number varchar
+  type company_type
+  billing_street varchar
+  billing_postal_code varchar
+  billing_city varchar
+  billing_country varchar [default: 'BE']
+  peppol_id varchar [note: 'for mandatory e-invoicing from 2026-01-01']
+  invoicing_method invoicing_method
+  default_locale locale
+}
+
+Table company_members {
+  id uuid [pk]
+  company_id uuid [ref: > companies.id]
+  user_id uuid [ref: > users.id, note: 'nullable for schools where parent orders for child']
+  display_name varchar
+  role company_member_role
+  spending_limit_daily decimal
+  spending_limit_monthly decimal
+  Note: 'OPEN: schools — parent/student as two members with guardian link, or separate Guardian entity?'
+}
+
+Table employer_contributions {
+  id uuid [pk]
+  company_id uuid [ref: > companies.id]
+  member_id uuid [ref: > company_members.id, note: 'nullable = policy applies to whole company']
+  type employer_contribution_type
+  amount decimal
+  applies_to employer_contribution_scope
+}
+
+// ============================================================
+// 3. Menu / Catalog
+// ============================================================
+
+Table categories {
+  id uuid [pk]
+  tenant_id uuid [ref: > tenants.id]
+  parent_category_id uuid [ref: > categories.id, note: 'nullable']
+  sort_order integer
+  Note: 'OPEN: time-windowed availability (lunch-only, breakfast-only)?'
+}
+
+Table products {
+  id uuid [pk]
+  tenant_id uuid [ref: > tenants.id]
+  sku varchar
+  base_price decimal
+  vat_rate_id uuid [ref: > vat_rates.id]
+  is_takeaway_prepared_meal boolean [note: 'triggers 12% VAT from 2026']
+  availability product_availability
+  Note: 'OPEN: track shelf life? (VAT rule = prepared meals, shelf life ≤ 2 days)'
+}
+
+Table product_categories {
+  product_id uuid [ref: > products.id]
+  category_id uuid [ref: > categories.id]
+
+  indexes {
+    (product_id, category_id) [pk]
+  }
+}
+
+Table product_variants {
+  id uuid [pk]
+  product_id uuid [ref: > products.id]
+  sku varchar
+  price_delta decimal
+}
+
+Table option_groups {
+  id uuid [pk]
+  product_id uuid [ref: > products.id]
+  min_selections integer
+  max_selections integer
+  required boolean
+}
+
+Table options {
+  id uuid [pk]
+  option_group_id uuid [ref: > option_groups.id]
+  price_delta decimal
+  Note: 'OPEN: can a modifier cross VAT rates (e.g. add a drink to a sandwich)?'
+}
+
+Table allergens {
+  id uuid [pk]
+  code allergen_code [unique]
+}
+
+Table product_allergens {
+  product_id uuid [ref: > products.id]
+  allergen_id uuid [ref: > allergens.id]
+
+  indexes {
+    (product_id, allergen_id) [pk]
+  }
+}
+
+Table dietary_tags {
+  id uuid [pk]
+  code varchar [unique, note: 'vegan | vegetarian | halal | kosher | gluten_free | ...']
+}
+
+Table product_dietary_tags {
+  product_id uuid [ref: > products.id]
+  dietary_tag_id uuid [ref: > dietary_tags.id]
+
+  indexes {
+    (product_id, dietary_tag_id) [pk]
+  }
+}
+
+// ============================================================
+// 4. Orders
+// ============================================================
+
+Table orders {
+  id uuid [pk]
+  tenant_id uuid [ref: > tenants.id]
+  storefront_id uuid [ref: > storefronts.id]
+  location_id uuid [ref: > locations.id]
+  customer_id uuid [ref: > customers.id]
+  group_order_id uuid [ref: > group_orders.id, note: 'nullable']
+  status order_status
+  fulfillment_type fulfillment_type
+  fulfillment_time timestamp
+  delivery_address json [note: 'nullable, delivery only']
+  subtotal decimal
+  vat_total decimal
+  total decimal
+  currency varchar [default: 'EUR']
+  payment_id uuid [ref: > payments.id]
+  invoice_id uuid [ref: > invoices.id]
+  placed_at timestamp
+  confirmed_at timestamp
+  ready_at timestamp
+  fulfilled_at timestamp
+  cancelled_at timestamp
+  notes text
+  Note: 'OPEN: snapshot all prices/names on order, or reference products? (Strong lean: snapshot)'
+}
+
+Table order_lines {
+  id uuid [pk]
+  order_id uuid [ref: > orders.id]
+  product_id uuid [ref: > products.id]
+  product_variant_id uuid [ref: > product_variants.id]
+  quantity integer
+  unit_price_snapshot decimal
+  vat_rate_snapshot decimal
+  line_total decimal
+}
+
+Table order_line_options {
+  order_line_id uuid [ref: > order_lines.id]
+  option_id uuid [ref: > options.id]
+  price_delta_snapshot decimal
+
+  indexes {
+    (order_line_id, option_id) [pk]
+  }
+}
+
+Table group_orders {
+  id uuid [pk]
+  company_id uuid [ref: > companies.id, note: 'nullable — can be ad-hoc']
+  tenant_id uuid [ref: > tenants.id]
+  location_id uuid [ref: > locations.id]
+  organizer_user_id uuid [ref: > users.id]
+  share_token varchar [unique]
+  deadline timestamp
+  fulfillment_type fulfillment_type
+  fulfillment_time timestamp
+  delivery_address json
+  status group_order_status
+  employer_contribution_applied decimal [note: 'denormalized summary']
+  Note: 'OPEN: can a single GroupOrder span multiple Tenants? Simpler to start with one shop per group. OPEN: recurring group orders — separate schedule entity?'
+}
+
+// ============================================================
+// 5. Fulfillment
+// ============================================================
+
+Table opening_hours {
+  id uuid [pk]
+  location_id uuid [ref: > locations.id]
+  day_of_week integer [note: '0 = Sunday ... 6 = Saturday']
+  open_time time
+  close_time time
+  valid_from date
+  valid_until date [note: 'nullable, for holiday overrides']
+}
+
+Table delivery_zones {
+  id uuid [pk]
+  location_id uuid [ref: > locations.id]
+  postal_codes json [note: 'array of postal codes']
+  polygon json [note: 'OPEN: postal list vs polygon?']
+  min_order_value decimal
+  delivery_fee decimal
+  estimated_time_minutes integer
+}
+
+Table delivery_slots {
+  id uuid [pk]
+  location_id uuid [ref: > locations.id]
+  start_at timestamp
+  end_at timestamp
+  capacity integer
+  type slot_type
+}
+
+// ============================================================
+// 6. Payments
+// ============================================================
+
+Table payments {
+  id uuid [pk]
+  order_id uuid [ref: > orders.id]
+  invoice_id uuid [ref: > invoices.id, note: 'nullable — B2B post-pay']
+  amount decimal
+  currency varchar [default: 'EUR']
+  method payment_method
+  status payment_status
+  provider payment_provider
+  provider_reference varchar
+  created_at timestamp
+  captured_at timestamp
+}
+
+Table wallets {
+  id uuid [pk]
+  customer_id uuid [ref: > customers.id]
+  balance decimal
+  currency varchar [default: 'EUR']
+  Note: 'OPEN: platform-wide (Smosser-style) or per-tenant?'
+}
+
+Table meal_voucher_accounts {
+  id uuid [pk]
+  user_id uuid [ref: > users.id]
+  provider meal_voucher_provider
+  external_ref varchar
+  linked_at timestamp
+  Note: 'Balance stays at provider; we just hold the link.'
+}
+
+Table payouts {
+  id uuid [pk]
+  tenant_id uuid [ref: > tenants.id]
+  period_start date
+  period_end date
+  gross_amount decimal
+  fees decimal
+  net_amount decimal
+  status payout_status
+  method varchar [default: 'sepa']
+  executed_at timestamp
+  Note: 'Smosser advertises daily payouts. Support it without requiring it.'
+}
+
+// ============================================================
+// 7. Invoicing (Peppol)
+// ============================================================
+
+Table invoices {
+  id uuid [pk]
+  type invoice_type
+  tenant_id uuid [ref: > tenants.id]
+  company_id uuid [ref: > companies.id, note: 'nullable']
+  customer_id uuid [ref: > customers.id, note: 'nullable']
+  invoice_number varchar [unique]
+  issue_date date
+  due_date date
+  subtotal decimal
+  vat_total decimal
+  total decimal
+  peppol_status peppol_status
+  peppol_id varchar
+  pdf_url varchar
+  paid_at timestamp
+  Note: 'OPEN: credit notes = separate CreditNote entity (Belgian norm) or negative invoices? OPEN: who issues to end customer — Tenant or Lunchbox on-behalf?'
+}
+
+Table invoice_lines {
+  id uuid [pk]
+  invoice_id uuid [ref: > invoices.id]
+  description varchar
+  quantity decimal
+  unit_price decimal
+  vat_rate decimal
+  line_total decimal
+  order_id uuid [ref: > orders.id, note: 'nullable — may reference an order']
+  group_order_id uuid [ref: > group_orders.id, note: 'nullable']
+}
+
+// ============================================================
+// 8. Tax
+// ============================================================
+
+Table vat_rates {
+  id uuid [pk]
+  code varchar [note: '6 | 12 | 21']
+  rate decimal
+  applies_from date
+  applies_until date [note: 'nullable']
+  tax_category_id uuid [ref: > tax_categories.id]
+}
+
+Table tax_categories {
+  id uuid [pk]
+  name varchar [note: 'grocery | takeaway_prepared_meal | restaurant_service | alcohol | ...']
+  Note: 'OPEN: is tax_category_id on Product enough, or do we always go through a category?'
+}
+
+// ============================================================
+// 9. Suppliers (upstream — later scope)
+// ============================================================
+
+Table suppliers {
+  id uuid [pk]
+  name varchar
+  vat_number varchar
+  peppol_id varchar
+}
+
+Table supplier_products {
+  id uuid [pk]
+  supplier_id uuid [ref: > suppliers.id]
+  name varchar
+  unit varchar
+  price decimal
+  min_order_qty integer
+}
+
+Table supplier_orders {
+  id uuid [pk]
+  supplier_id uuid [ref: > suppliers.id]
+  tenant_id uuid [ref: > tenants.id]
+  status varchar
+  expected_delivery_at timestamp
+  Note: 'TODO: defer deep modeling until consumer + merchant loops are proven.'
+}
+
+Table supplier_order_lines {
+  id uuid [pk]
+  supplier_order_id uuid [ref: > supplier_orders.id]
+  supplier_product_id uuid [ref: > supplier_products.id]
+  quantity integer
+  unit_price_snapshot decimal
+}
+
+// ============================================================
+// 10. Translations
+// ============================================================
+// OPEN: big decision — JSON column per field, central translations
+// table, or per-entity translations table? Sketching option C here.
+
+Table product_translations {
+  product_id uuid [ref: > products.id]
+  locale locale
+  name varchar
+  description text
+
+  indexes {
+    (product_id, locale) [pk]
+  }
+}
+
+Table category_translations {
+  category_id uuid [ref: > categories.id]
+  locale locale
+  name varchar
+
+  indexes {
+    (category_id, locale) [pk]
+  }
+}
+
+Table option_group_translations {
+  option_group_id uuid [ref: > option_groups.id]
+  locale locale
+  name varchar
+
+  indexes {
+    (option_group_id, locale) [pk]
+  }
+}
+
+Table option_translations {
+  option_id uuid [ref: > options.id]
+  locale locale
+  name varchar
+
+  indexes {
+    (option_id, locale) [pk]
+  }
+}
+
+// ============================================================
+// Table groups (visual clustering in dbdiagram.io)
+// ============================================================
+
+TableGroup tenancy_identity {
+  tenants
+  locations
+  storefronts
+  users
+  merchant_users
+  customers
+}
+
+TableGroup b2b_buyer {
+  companies
+  company_members
+  employer_contributions
+}
+
+TableGroup catalog {
+  categories
+  products
+  product_categories
+  product_variants
+  option_groups
+  options
+  allergens
+  product_allergens
+  dietary_tags
+  product_dietary_tags
+}
+
+TableGroup orders {
+  orders
+  order_lines
+  order_line_options
+  group_orders
+}
+
+TableGroup fulfillment {
+  opening_hours
+  delivery_zones
+  delivery_slots
+}
+
+TableGroup payments {
+  payments
+  wallets
+  meal_voucher_accounts
+  payouts
+}
+
+TableGroup invoicing {
+  invoices
+  invoice_lines
+}
+
+TableGroup tax {
+  vat_rates
+  tax_categories
+}
+
+TableGroup suppliers {
+  suppliers
+  supplier_products
+  supplier_orders
+  supplier_order_lines
+}
+
+TableGroup translations {
+  product_translations
+  category_translations
+  option_group_translations
+  option_translations
+}

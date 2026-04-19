@@ -1,0 +1,34 @@
+{
+  "name": "@lunchbox/store",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --port 4100 --turbopack",
+    "build": "next build",
+    "start": "next start --port 4100",
+    "typecheck": "tsc --noEmit",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "next": "^15.1.4",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "zustand": "^5.0.2",
+    "@tanstack/react-query": "^5.62.0",
+    "@lunchbox/ui": "*",
+    "@lunchbox/contracts": "*",
+    "@lunchbox/trpc-client": "*",
+    "@lunchbox/trpc-server": "*",
+    "@lunchbox/i18n": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "typescript": "~5.9.2",
+    "tailwindcss": "^4.0.0",
+    "@tailwindcss/postcss": "^4.0.0",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.49"
+  }
+}
